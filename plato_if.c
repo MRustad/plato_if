@@ -33,9 +33,11 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <alsa/asoundlib.h>
+#include <linux/spi/spidev.h>
 
 #define NO_TERMINAL	1
 #define HOST_DECODE1	0
@@ -156,6 +158,7 @@ enum host_states { in_sync, out_of_sync };
 
 struct host_session {
 	int		fd;		/* File descriptor for session */
+	int		spi_fd;		/* SPI file descriptor */
 	enum host_states host_state;
 	uint16_t	inwd_in;
 	uint16_t	inwd_out;
@@ -204,21 +207,23 @@ static void setdiv(struct host_session *sess, int vix, int div)
 	v->frac = frac_gen(step, &v->shift);
 }
 
-#define XOFF1LIMIT	((2 * HOST_IN_WORDS) / 3)
-#define XOFF2LIMIT	((3 * HOST_IN_WORDS) / 4)
-#define XON1LIMIT	(HOST_IN_WORDS / 3)
-#define XON2LIMIT	(HOST_IN_WORDS / 4)
+#define XOFF1LIMIT ((2 * HOST_IN_WORDS) / 3)
+#define XOFF2LIMIT ((3 * HOST_IN_WORDS) / 4)
+#define XON1LIMIT (HOST_IN_WORDS / 3)
+#define XON2LIMIT (HOST_IN_WORDS / 4)
 
-extern char	*optarg;
-extern int	optind;
-extern int	optopt;
-extern int	opterr;
-extern int	optreset;
+extern char *optarg;
+extern int optind;
+extern int optopt;
+extern int opterr;
+extern int optreset;
 
 static int debug_flag;
 
-static const char	*port = "5004";	/* Default port number */
-static const char	*host = "cyberserv.org";
+static const char *port = "5004";	/* Default port number */
+static const char *host = "cyberserv.org";
+static const char *spi_dev = "/dev/spidev0.0";
+static uint32_t	spi_speed = 4000;
 
 static struct host_session sess = {
 	.pending_echo = -1,
@@ -612,14 +617,19 @@ static void decode_host_word(uint32_t w)
 }
 #endif /* HOST_DECODE */
 
-static void do_host_word(struct host_session *sess)
+/* do_host_word() - Process any host word
+ * @sess: Pointer to host_session
+ *
+ * Returns any word to send to attached terminal
+ */
+static uint32_t do_host_word(struct host_session *sess)
 {
 	uint32_t word;
 	uint16_t tmp_out;
 	int16_t nwds;
 
 	if (sess->inwd_in == sess->inwd_out)
-		return;
+		return 0;
 
 	tmp_out = sess->inwd_out;
 	word = sess->inwds[tmp_out++];
@@ -643,18 +653,15 @@ static void do_host_word(struct host_session *sess)
 		send_key(sess, KEY_XON);
 	}
 	if (!word)
-		return;
+		return 0;
 #if NO_TERMINAL
 	if ((word & 07640000) == 04240000)
 		sess->wc = (word >> 7) & 0177;
 	if ((word & 07600000) == 04200000)
 		sess->inhibit = !!(word & 00100000);
 #endif /* NO_TERMINAL */
-//	fprintf(stderr, "%s: send word=%07o\n", __func__, word);
 	word = gsw_handle(sess, word);
-#if !NO_TERMINAL
-	/* Output word to terminal */
-#endif /* !NO_TERMINAL */
+	return word;
 }
 
 #if NO_TERMINAL
@@ -712,6 +719,30 @@ const struct keys keys[] = {
 const uint16_t num_keys = ARRAY_SIZE(keys);
 #endif /* NO_TERMINAL */
 
+/* send_word() - Send word to terminal
+ * @sess: Pointer to host_session
+ * @word: Word to send to terminal
+ */
+static void send_word(struct host_session *sess, uint32_t word)
+{
+	uint8_t bytes[3];
+	int rc;
+
+	word <<= 12;
+	bytes[0] = word >> 24;
+	bytes[1] = word >> 16;
+	bytes[2] = word >> 8;
+	rc = write(sess->spi_fd, bytes, sizeof(bytes));
+	if (rc < 0) {
+		fprintf(stderr, "%s: write error: %m\n", __func__);
+		return;
+	}
+	if (rc != sizeof(bytes)) {
+		fprintf(stderr, "%s: write returned %d\n", __func__, rc);
+		return;
+	}
+}
+
 static void gsw_poll(void *p, int event)
 {
 	int rc;
@@ -736,6 +767,7 @@ static void gsw_poll(void *p, int event)
 	if (event & POLLOUT) {
 		int i;
 		int voice;
+		uint32_t out_word;
 
 		rc = snd_pcm_writei(snd_ph, sess->samples,
 				    sizeof(sess->samples) / FRAME_SIZE);
@@ -744,7 +776,8 @@ static void gsw_poll(void *p, int event)
 				__func__, rc);
 			return;
 		}
-		do_host_word(sess);
+		out_word = do_host_word(sess);
+		send_word(sess, out_word);
 		for (i = 0; i < (int)ARRAY_SIZE(sess->samples); ++i) {
 			uint32_t sample = 0;
 			struct voice *v = &sess->voices[0];
@@ -1010,6 +1043,12 @@ static void put_host_word(struct host_session *sess, uint32_t w)
 static void usage(const char *cmd)
 {
 	fprintf(stderr, "%s: Command usage:\n", cmd);
+	fprintf(stderr,
+		"\t-d\tEnable debugging\n"
+		"\t-h\tDisplay this help\n"
+		"\t-p\tPort number (default 5004)\n"
+		"\t-r\tSPI rate\n"
+		"\t-s\tSPI device path\n");
 }
 
 /* process_arguments - Process arguments
@@ -1020,10 +1059,10 @@ static void usage(const char *cmd)
  */
 static int process_arguments(int argc, char *argv[])
 {
-	int	ch;
-	const char	*cmd = argv[0];
+	int ch;
+	const char *cmd = argv[0];
 
-	while ((ch = getopt(argc, argv, "dhp:")) != -1) {
+	while ((ch = getopt(argc, argv, "dhp:r:s:")) != -1) {
 		switch (ch) {
 		case 'd':
 			++debug_flag;
@@ -1035,6 +1074,14 @@ static int process_arguments(int argc, char *argv[])
 			if (argv[optind][0] == '\0')
 				return 1;
 			port = argv[optind];
+			break;
+		case 'r':
+			spi_speed = atoi(argv[optind]);
+			break;
+		case 's':
+			if (argv[optind][0] == '\0')
+				return 1;
+			spi_dev = argv[optind];
 			break;
 		case '?':
 		default:
@@ -1116,6 +1163,87 @@ static void host_poll(void *data, int revents)
 	}
 }
 
+/* open_spi() - Open spi device
+ * @dev: Path to device
+ * @speed: Maximum speed
+ *
+ * Returns file desriptor or -1 if failed
+ */
+static int open_spi(const char *dev, uint32_t speed)
+{
+	int fd;
+	int rc;
+	uint8_t mode;
+	uint8_t bits;
+
+	mode = SPI_NO_CS | SPI_MODE_0;
+	bits = 8;
+	fd = open(dev, O_RDWR);
+	if (fd < 0) {
+		int err = errno;
+
+		fprintf(stderr, "Failed to open SPI device %s, errno=%d\n",
+			dev, err);
+		errno = err;
+		return -1;
+	}
+
+	/* Set SPI mode */
+
+	rc = ioctl(fd, SPI_IOC_WR_MODE, &mode);
+	if (rc == -1) {
+		fprintf(stderr, "SPI_IOC_WR_MODE failed, errno=%d\n", errno);
+		goto err_exit;
+	}
+
+	rc = ioctl(fd, SPI_IOC_RD_MODE, &mode);
+	if (rc == -1) {
+		fprintf(stderr, "SPI_IOC_RD_MODE failed, errno=%d\n", errno);
+		goto err_exit;
+	}
+	fprintf(stderr, "mode=%d\n", mode);
+
+	/* SPI bits per word */
+
+	rc = ioctl(fd, SPI_IOC_WR_BITS_PER_WORD, &bits);
+	if (rc == -1) {
+		fprintf(stderr, "SPI_IOC_WR_BITS_PER_WORD failed, errno=%d\n",
+			errno);
+		goto err_exit;
+	}
+
+	rc = ioctl(fd, SPI_IOC_RD_BITS_PER_WORD, &bits);
+	if (rc == -1) {
+		fprintf(stderr, "SPI_IOC_RD_BITS_PER_WORD failed, errno=%d\n",
+			errno);
+		goto err_exit;
+	}
+	fprintf(stderr, "bits=%d\n", bits);
+
+	/* SPI speed */
+
+	rc = ioctl(fd, SPI_IOC_WR_MAX_SPEED_HZ, &speed);
+	if (rc == -1) {
+		fprintf(stderr, "SPI_IOC_WR_MAX_SPEED failed, errno=%d\n",
+			errno);
+		goto err_exit;
+	}
+
+	rc = ioctl(fd, SPI_IOC_RD_MAX_SPEED_HZ, &speed);
+	if (rc == -1) {
+		fprintf(stderr, "SPI_IOC_RD_MAX_SPEED failed, errno=%d\n",
+			errno);
+		goto err_exit;
+	}
+	fprintf(stderr, "speed=%d\n", speed);
+
+	return fd;
+
+err_exit:
+	close(fd);
+	return -1;
+}
+
 /* main() - Main program
  * @argc: Count of arguments passed
  * @argv: Pointer to an array of pointers to arguments
@@ -1139,6 +1267,15 @@ int main(int argc, char *argv[])
 #if NO_TERMINAL
 	sess.next_time = keys[0].delay;
 #endif /* NO_TERMINAL */
+
+	sess.spi_fd = open_spi(spi_dev, spi_speed);
+	if (sess.spi_fd < 0) {
+		int err = errno;
+
+		fprintf(stderr, "Failed to open SPI device %s, errno=%d\n",
+			spi_dev, err);
+		exit(err);
+	}
 
 	sess.fd = open_host(host);
 	if (sess.fd < 0) {
