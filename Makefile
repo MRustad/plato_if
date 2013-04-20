@@ -4,7 +4,7 @@ SIMPLE_TARGETS := plato_if
 OBJ := obj
 
 __cflags = -O2 -Wall -Werror -Wextra -Wmissing-prototypes -Wstrict-prototypes \
-	-Wcast-align -Wcast-qual -Wformat=2 -Wundef -MD -MF ${OBJ}/$@.d -g
+	-Wcast-align -Wcast-qual -Wformat=2 -Wundef -MMD -MF ${OBJ}/$@.d -g
 __ldflags = -O2 -Wall -Werror -g
 
 #LIBS_plato_if := -lbcm2835 -lrt -lasound
@@ -13,9 +13,6 @@ LIBS_plato_if := -lrt -lasound
 all: ${OBJ} ${TARGETS} ${SIMPLE_TARGETS}
 
 -include $(wildcard ${OBJ}/*.d)
-
-test:
-	echo CC=${CC}
 
 .SUFFIXES:
 

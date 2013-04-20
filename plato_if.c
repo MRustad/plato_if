@@ -728,7 +728,7 @@ static void send_word(struct host_session *sess, uint32_t word)
 	uint8_t bytes[3];
 	int rc;
 
-	word <<= 12;
+	word <<= 11;
 	bytes[0] = word >> 24;
 	bytes[1] = word >> 16;
 	bytes[2] = word >> 8;
