@@ -1176,7 +1176,7 @@ static int open_spi(const char *dev, uint32_t speed)
 	uint8_t mode;
 	uint8_t bits;
 
-	mode = SPI_NO_CS | SPI_MODE_0;
+	mode = SPI_NO_CS | SPI_MODE_2;
 	bits = 8;
 	fd = open(dev, O_RDWR);
 	if (fd < 0) {
