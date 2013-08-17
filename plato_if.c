@@ -39,7 +39,7 @@
 #include <alsa/asoundlib.h>
 #include <linux/spi/spidev.h>
 
-#define NO_TERMINAL	1
+#define NO_TERMINAL	0
 #define HOST_DECODE1	0
 #define HOST_DECODE2	1
 
@@ -177,8 +177,11 @@ struct host_session {
 #if NO_TERMINAL
 	uint16_t	next_key;
 	uint16_t	next_time;
+#else
+	uint32_t	key_bits;	/* Accumulated keyset bits */
+	uint16_t	key_bit_count;	/* Count of bits accumulated */
 #endif /* NO_TERMINAL */
-
+	uint8_t		spi_buf[6];
 };
 
 /* setamp - Set amplitude on voice
@@ -629,7 +632,7 @@ static uint32_t do_host_word(struct host_session *sess)
 	int16_t nwds;
 
 	if (sess->inwd_in == sess->inwd_out)
-		return 0;
+		return 0x4000001;
 
 	tmp_out = sess->inwd_out;
 	word = sess->inwds[tmp_out++];
@@ -672,15 +675,15 @@ struct keys {
 
 const struct keys keys[] = {
 	{ 5, KEY_TURNON },
-	{ 800, KEY_NEXT },
-	{ 800, LC_KEY('r') },
+	{ 600, KEY_NEXT },
+	{ 600, LC_KEY('r') },
 	{ 20, LC_KEY('u') },
 	{ 20, LC_KEY('s') },
 	{ 20, LC_KEY('t') },
 	{ 20, LC_KEY('a') },
 	{ 20, LC_KEY('d') },
 	{ 60, KEY_NEXT },
-	{ 800, LC_KEY('c') },
+	{ 600, LC_KEY('c') },
 	{ 20, LC_KEY('f') },
 	{ 20, LC_KEY('r') },
 	{ 20, LC_KEY('e') },
@@ -688,13 +691,13 @@ const struct keys keys[] = {
 	{ 20, LC_KEY('k') },
 	{ 20, LC_KEY('s') },
 	{ 60, KEY_STOP1 },
-	{ 800, LC_KEY('g') },
+	{ 600, LC_KEY('g') },
 	{ 30, LC_KEY('o') },
 	{ 30, LC_KEY('o') },
 	{ 30, LC_KEY('c') },
 	{ 30, LC_KEY('h') },
 	{ 80, KEY_NEXT },
-	{ 800, LC_KEY('g') },
+	{ 600, LC_KEY('g') },
 	{ 20, LC_KEY('s') },
 	{ 20, LC_KEY('w') },
 	{ 20, LC_KEY('a') },
@@ -702,8 +705,8 @@ const struct keys keys[] = {
 	{ 20, LC_KEY('d') },
 	{ 20, LC_KEY('s') },
 	{ 60, KEY_DATA },
-	{ 800, LC_KEY('d') },
-	{ 800, LC_KEY('b') },
+	{ 600, LC_KEY('d') },
+	{ 600, LC_KEY('b') },
 };
 
 const uint16_t num_keys = ARRAY_SIZE(keys);
@@ -715,23 +718,80 @@ const uint16_t num_keys = ARRAY_SIZE(keys);
  */
 static void send_word(struct host_session *sess, uint32_t word)
 {
-	uint8_t bytes[3];
+	uint8_t bytes[sizeof(sess->spi_buf)];
+	struct spi_ioc_transfer spi_xfer = {
+		.tx_buf = (__u64)(unsigned long)bytes,
+		.rx_buf = (__u64)(unsigned long)sess->spi_buf,
+		.len = sizeof(sess->spi_buf),
+		.delay_usecs = 0,
+		.speed_hz = 4000,
+		.bits_per_word = 8,
+	};
+	unsigned int i;
 	int rc;
 
 	word <<= 11;
 	bytes[0] = word >> 24;
 	bytes[1] = word >> 16;
 	bytes[2] = word >> 8;
-	rc = write(sess->spi_fd, bytes, sizeof(bytes));
+	for (i = 3; i < sizeof(bytes); ++i)
+		bytes[i] = 0;
+	rc = ioctl(sess->spi_fd, SPI_IOC_MESSAGE(1), &spi_xfer);
 	if (rc < 0) {
 		fprintf(stderr, "%s: write error: %m\n", __func__);
 		return;
 	}
-	if (rc != sizeof(bytes)) {
-		fprintf(stderr, "%s: write returned %d\n", __func__, rc);
-		return;
-	}
 }
+
+#if !NO_TERMINAL
+static uint32_t fls(uint32_t w)
+{
+	uint32_t prev;
+
+	if (!w)
+		return 0;
+	while (w) {
+		prev = w;
+		w &= w - 1;
+	}
+	return ffs(prev);
+}
+
+static void process_spi_input(struct host_session *sess)
+{
+	unsigned int i;
+	uint8_t	*bytes = sess->spi_buf;
+
+	for (i = 0; i < sizeof(sess->spi_buf); ++i) {
+		if (sess->key_bit_count == 0) {
+			if (bytes[i] == 0)
+				continue;
+			sess->key_bit_count = fls(bytes[i]);
+			sess->key_bits = bytes[i];
+			continue;
+		}
+		sess->key_bits = (sess->key_bits << 8) | bytes[i];
+		sess->key_bit_count += 8;
+		if (sess->key_bit_count >= 12) {
+			uint16_t key_data;
+			int bits_remaining = sess->key_bit_count - 12;
+
+			key_data = sess->key_bits >> bits_remaining;
+			fprintf(stderr, "Send keyset data = %4o\n",
+				(key_data >> 1) & 0x3ff);
+			send_key(sess, (key_data >> 1) & 0x3ff);
+			sess->key_bits &= (1 << bits_remaining) - 1;
+			sess->key_bit_count -= 12;
+			if (sess->key_bits == 0)
+				sess->key_bit_count = 0;
+			else
+				sess->key_bit_count = fls(sess->key_bits);
+		}
+	}
+
+	return;
+}
+#endif /* ! NO_TERMINAL */
 
 static void gsw_poll(void *p, int event)
 {
@@ -789,6 +849,8 @@ static void gsw_poll(void *p, int event)
 			else
 				fprintf(stderr, "done sending keys\n");
 		}
+#else
+		process_spi_input(sess);
 #endif /* NO_TERMINAL */
 	}
 }
@@ -944,6 +1006,8 @@ static int open_host(const char *host)
 	s = -1;
 	err = 0;
 	for (res = res0; res; res = res->ai_next) {
+		int true_opt = 1;
+
 		s = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
 		if (s < 0) {
 			cause = "socket";
@@ -957,6 +1021,9 @@ static int open_host(const char *host)
 			s = -1;
 			continue;
 		}
+		setsockopt(s, SOL_SOCKET, SO_KEEPALIVE, (char *)&true_opt,
+			   sizeof(true_opt));
+		fcntl(s, F_SETFL, O_NONBLOCK);
 		break;
 	}
 	freeaddrinfo(res0);
@@ -1096,6 +1163,7 @@ static void host_poll(void *data, int revents)
 {
 	struct host_session *sess = data;
 	uint8_t	inbuf[3];
+	unsigned int i;
 
 	if (revents & POLLERR) {
 		fprintf(stderr, "Error set\n");
@@ -1105,19 +1173,31 @@ static void host_poll(void *data, int revents)
 		ssize_t len;
 
 		if (sess->host_state == out_of_sync) {
-			len = recv(sess->fd, inbuf, 1, 0);
-
+			len = recv(sess->fd, &inbuf[0], 1, MSG_NOSIGNAL);
 			if (len != 1)
 				return;
-			if (inbuf[0] & 0200)
+			if (inbuf[0] & 0200) {
+				fprintf(stderr, "0200 set - oos\n");
 				return;
-			len = recv(sess->fd, &inbuf[1], sizeof(inbuf) - 1, 0);
-			if (len != sizeof(inbuf) - 1)
-				return;
-			++len;
+			}
+			for (i = 1; i < sizeof(inbuf); ++i) {
+				len = recv(sess->fd, &inbuf[i], 1,
+					   MSG_NOSIGNAL);
+				if (len != 1) {
+					fprintf(stderr, "len wrong %zd\n", len);
+					return;
+				}
+			}
+			len = sizeof(inbuf);
 			sess->host_state = in_sync;
 		} else {
-			len = recv(sess->fd, inbuf, sizeof(inbuf), 0);
+			len = recv(sess->fd, inbuf, sizeof(inbuf),
+				   MSG_NOSIGNAL);
+			if (len != sizeof(inbuf)) {
+				fprintf(stderr, "len wrong %zd\n", len);
+				sess->host_state = out_of_sync;
+				return;
+			}
 		}
 		if (len != sizeof(inbuf)) {
 			if (len < 0) {
@@ -1138,8 +1218,10 @@ static void host_poll(void *data, int revents)
 		int32_t	w = host_word(sess, inbuf);
 		uint32_t count;
 
-		if (w < 0)
+		if (w < 0) {
+			fprintf(stderr, "w = %04x\n", w);
 			return;
+		}
 
 #if HOST_DECODE1
 		decode_host_word(w);
@@ -1150,6 +1232,8 @@ static void host_poll(void *data, int revents)
 			fprintf(stderr, "count=%d ", count);
 			send_key(sess, KEY_XOFF);
 		}
+	} else {
+		fprintf(stderr, "revents=%04x\n", revents);
 	}
 }
 
@@ -1166,9 +1250,9 @@ static int open_spi(const char *dev, uint32_t speed)
 	uint8_t mode;
 	uint8_t bits;
 
-	mode = SPI_NO_CS | SPI_MODE_2;
+	mode = SPI_NO_CS | SPI_MODE_1;
 	bits = 8;
-	fd = open(dev, O_RDWR);
+	fd = open(dev, O_RDWR | O_NONBLOCK);
 	if (fd < 0) {
 		int err = errno;
 
@@ -1266,6 +1350,7 @@ int main(int argc, char *argv[])
 			spi_dev, err);
 		exit(err);
 	}
+	fcntl(sess.spi_fd, F_SETFL, O_NONBLOCK);
 
 	sess.fd = open_host(host);
 	if (sess.fd < 0) {
