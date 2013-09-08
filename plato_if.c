@@ -672,8 +672,6 @@ struct keys {
 
 const struct keys keys[] = {
 	{ 5, KEY_TURNON },
-	{ 800, KEY_STOP1 },
-//	{ 600, KEY_STOP1 },
 	{ 800, KEY_NEXT },
 	{ 800, LC_KEY('r') },
 	{ 20, LC_KEY('u') },
@@ -696,14 +694,6 @@ const struct keys keys[] = {
 	{ 30, LC_KEY('c') },
 	{ 30, LC_KEY('h') },
 	{ 80, KEY_NEXT },
-	{ 800, LC_KEY('g') },
-	{ 20, LC_KEY('s') },
-	{ 20, LC_KEY('w') },
-	{ 20, LC_KEY('a') },
-	{ 20, LC_KEY('i') },
-	{ 20, LC_KEY('d') },
-	{ 20, LC_KEY('s') },
-	{ 400, KEY_DATA },	/* Why does this help? */
 	{ 800, LC_KEY('g') },
 	{ 20, LC_KEY('s') },
 	{ 20, LC_KEY('w') },
@@ -1027,14 +1017,14 @@ static void put_host_word(struct host_session *sess, uint32_t w)
 {
 	uint16_t tmp_ix;
 
-	tmp_ix = sess->inwd_in + 1;
+	tmp_ix = sess->inwd_in;
+	sess->inwds[tmp_ix++] = w;
 	if (tmp_ix == ARRAY_SIZE(sess->inwds))
 		tmp_ix = 0;
 	if (tmp_ix == sess->inwd_out) {
 		fprintf(stderr, "host word overflow\n");
 		return;
 	}
-	sess->inwds[tmp_ix] = w;
 	sess->inwd_in = tmp_ix;
 }
 
