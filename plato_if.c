@@ -154,18 +154,31 @@ static unsigned int generate(struct voice *v)
 #define	HOST_IN_WORDS	5000
 #define LDE_WAIT	5
 
+enum terminal_cmd_codes {
+	CMD_NOP	= 0,	/* No-op */
+	CMD_LDM = 1,	/* Load Mode */
+	CMD_LDC = 2,	/* Load Coordinate */
+	CMD_LDE = 3,	/* Load Echo */
+	CMD_LDA = 4,	/* Load memory Address */
+	CMD_SSL = 5,	/* Load Slide */
+	CMD_AUD = 6,	/* Load Audio */
+	CMD_EXT = 7	/* Load External Channel */
+};
+
 enum host_states { in_sync, out_of_sync };
 
 struct host_session {
 	int		fd;		/* File descriptor for session */
 	int		spi_fd;		/* SPI file descriptor */
 	enum host_states host_state;
+	uint16_t	erase_abort_count;
 	uint16_t	inwd_in;
 	uint16_t	inwd_out;
 	uint32_t	inwds[HOST_IN_WORDS];
 	int32_t		pending_echo;
 	uint32_t	gsw_words[32];
 	uint32_t	gsw_cnt;
+	uint8_t		current_mode;
 	uint8_t		cis;		/* GSW count inhibit */
 	uint8_t		vs;		/* Voice specifier */
 	uint8_t		vix;		/* Voice index */
@@ -434,7 +447,7 @@ static uint32_t gsw_handle(struct host_session *sess, uint32_t word)
 
 	data = (word >> 1) & 0x7FFF;	/* Extract only the data */
 	switch ((word >> 16) & 7) {
-	case 6:		/* If audio command */
+	case CMD_AUD:		/* If audio command */
 		if ((word & 0x7800)) {	/* If not GSW NOP */
 			sess->cis = (data & 0x8000) != 0;
 			sess->vix = sess->vs = (data >> 12) & 3;
@@ -445,7 +458,7 @@ static uint32_t gsw_handle(struct host_session *sess, uint32_t word)
 		}
 		break;
 
-	case 7:		/* If ext command */
+	case CMD_EXT:		/* If ext command */
 		setdiv(sess, sess->vix, E2D(data & 0xFFFFF));
 		if (!sess->cis) {
 			if (sess->vix)
@@ -564,7 +577,7 @@ static void decode_host_word(uint32_t w)
 		"Write", "Write, Screen Erase"
 	};
 
-	if (w & 02000000) {
+	if (w & (1 << 19)) {
 		fprintf(stderr, "DW %07o\t%s\t%s\t%s\n",
 			w, chmem((w >> 13) & 077),
 			chmem((w >> 7) & 077), chmem((w >> 1) & 077));
@@ -574,44 +587,44 @@ static void decode_host_word(uint32_t w)
 	fprintf(stderr, "CW %07o: ", w);
 
 	switch (cmd) {
-	case 0:
+	case CMD_NOP:
 		if (!decode_nop(w))
 			fprintf(stderr, "NOP\n");
 		return;
 
-	case 1:
+	case CMD_LDM:
 		fprintf(stderr, "LDM I=%d, ", (w >> 15) & 1);
 		if ((w >> 14) & 1)
 			fprintf(stderr, "wc=%d, ", (w >> 7) & 0177);
 		fprintf(stderr, "mode=%d, %s\n", (w >> 4) & 03, mstrs[(w >> 1) & 07]);
 		return;
 
-	case 2:
+	case CMD_LDC:
 		fprintf(stderr, "LDC %c=%d\n", (w & (1 << 10)) ? 'Y' : 'X',
 			(w >> 1) & 0777);
 		return;
 
-	case 3:
+	case CMD_LDE:
 		fprintf(stderr, "LDE %d (%04o)\n", (w >> 1) & 0177,
 			(w >> 1) & 0177);
 		return;
 
-	case 4:
+	case CMD_LDA:
 		fprintf(stderr, "LDA %d (%04o)\n", (w >> 1) & 01777,
 			(w >> 1) & 01777);
 		return;
 
-	case 5:
+	case CMD_SSL:
 		fprintf(stderr, "SSL L=%d, S=%d, X=%d, Y=%d\n", (w >> 10) & 1,
 			(w >> 9) & 1, (w >> 5) & 017, (w >> 1) & 017);
 		return;
 
-	case 6:
+	case CMD_AUD:
 		fprintf(stderr, "AUD %d (%05o)\n", (w >> 1) & 077777,
 			(w >> 1) & 077777);
 		return;
 
-	case 7:
+	case CMD_EXT:
 		fprintf(stderr, "EXT %d (%05o)\n", (w >> 1) & 077777,
 			(w >> 1) & 077777);
 		return;
@@ -622,6 +635,84 @@ static void decode_host_word(uint32_t w)
 }
 #endif /* HOST_DECODE */
 
+static bool is_screen_clear(uint32_t w)
+{
+	enum terminal_cmd_codes cmd = (w >> 16) & 7;
+
+	if (w & (1 << 19))	/* If not a command word */
+		return false;
+	if (cmd != CMD_LDM)	/* If not LDM command */
+		return false;
+	if (w & 2)
+		return true;
+	return false;
+}
+
+static bool is_abortable_command(struct host_session *sess, uint32_t w)
+{
+	enum terminal_cmd_codes cmd = (w >> 16) & 7;
+
+	if (w & (1 << 19)) {	/* If not a command word */
+		w >>= 1;
+		if (sess->current_mode == 3 && (w & 0777700) == 0777700)
+			return false;
+		return sess->current_mode != 2;
+	}
+
+	switch (cmd) {
+	case CMD_NOP:
+	case CMD_SSL:
+	case CMD_AUD:
+	case CMD_EXT:
+		return true;
+
+	case CMD_LDM:
+	case CMD_LDC:
+	case CMD_LDE:
+	case CMD_LDA:
+		return false;
+	}
+	return true;
+}
+
+static void track_mode(struct host_session *sess, uint32_t w)
+{
+	enum terminal_cmd_codes cmd = (w >> 16) & 7;
+
+	if (w & (1 << 19))	/* If not a command word */
+		return;
+	if (cmd != CMD_LDM)
+		return;
+	sess->current_mode = (w >> 4) & 3;
+}
+
+/* get_host_word() - Get next host word from buffer
+ * @sess: Pointer to host_session
+ *
+ * Returns next unaborted word to send to terminal
+ */
+static uint32_t get_host_word(struct host_session *sess)
+{
+	uint32_t word;
+	uint16_t tmp_out = sess->inwd_out;
+
+	do {
+		word = sess->inwds[tmp_out++];
+		if (tmp_out >= ARRAY_SIZE(sess->inwds))
+			tmp_out = 0;
+		if (!sess->erase_abort_count)
+			break;
+		if (is_screen_clear(word))
+			--sess->erase_abort_count;
+		if (!is_abortable_command(sess, word))
+			break;
+		fprintf(stderr, "A\n");
+		decode_host_word(word);
+	} while (sess->erase_abort_count);
+	sess->inwd_out = tmp_out;
+	return word;
+}
+
 /* do_host_word() - Process any host word
  * @sess: Pointer to host_session
  *
@@ -630,21 +721,17 @@ static void decode_host_word(uint32_t w)
 static uint32_t do_host_word(struct host_session *sess)
 {
 	uint32_t word;
-	uint16_t tmp_out;
 	int16_t nwds;
 
 	if (sess->inwd_in == sess->inwd_out)
 		return 04000003;
 
-	tmp_out = sess->inwd_out;
-	word = sess->inwds[tmp_out++];
-	if (tmp_out >= ARRAY_SIZE(sess->inwds))
-		tmp_out = 0;
-	sess->inwd_out = tmp_out;
+	word = get_host_word(sess);
 	sess->wc = (sess->wc + 1) & 0177;
 #if HOST_DECODE2
 	decode_host_word(word);
 #endif /* HOST_DECODE2 */
+	track_mode(sess, word);
 	word = echo_handle(sess, word);
 	if (!word)
 		++sess->lde_count;
@@ -762,6 +849,7 @@ static uint32_t fls(uint32_t w)
 static void abort_all_output(struct host_session *sess)
 {
 	sess->inwd_out = sess->inwd_in;
+	sess->erase_abort_count = 0;
 }
 
 static void process_spi_input(struct host_session *sess)
@@ -1094,6 +1182,8 @@ static void put_host_word(struct host_session *sess, uint32_t w)
 	uint16_t tmp_ix;
 
 	tmp_ix = sess->inwd_in;
+	if (is_screen_clear(w))
+		++sess->erase_abort_count;
 	sess->inwds[tmp_ix++] = w;
 	if (tmp_ix == ARRAY_SIZE(sess->inwds))
 		tmp_ix = 0;
