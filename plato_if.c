@@ -461,7 +461,7 @@ static uint32_t gsw_handle(struct host_session *sess, uint32_t word)
 	if (sess->gsw_cnt >= ARRAY_SIZE(sess->gsw_words))
 		sess->gsw_cnt = 0;
 
-	return 0x4000001;		/* Send NOP to terminal */
+	return 04000003;		/* Send NOP to terminal */
 }
 
 #if HOST_DECODE1 || HOST_DECODE2
@@ -632,7 +632,7 @@ static uint32_t do_host_word(struct host_session *sess)
 	int16_t nwds;
 
 	if (sess->inwd_in == sess->inwd_out)
-		return 0x4000001;
+		return 04000003;
 
 	tmp_out = sess->inwd_out;
 	word = sess->inwds[tmp_out++];
