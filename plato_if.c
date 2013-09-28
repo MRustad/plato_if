@@ -338,6 +338,7 @@ static unsigned int host_word_count(struct host_session *sess)
 
 #define KEY_NEXT	026
 //#define KEY_STOP1	01640
+#define KEY_STOP	032
 #define KEY_STOP1	072
 #define KEY_TURNON	01700
 #define KEY_DATA	031
@@ -350,6 +351,7 @@ static unsigned int host_word_count(struct host_session *sess)
 const char * const key_decode[02000] = {
 	[KEY_NEXT] = "-next-",
 	[KEY_DATA] = "-data-",
+	[KEY_STOP] = "-stop-",
 	[KEY_STOP1] = "-stop1-",
 	[LC_KEY('a')] = "a", [LC_KEY('b')] = "b", [LC_KEY('c')] = "c",
 	[LC_KEY('d')] = "d", [LC_KEY('e')] = "e", [LC_KEY('f')] = "f",
@@ -757,6 +759,11 @@ static uint32_t fls(uint32_t w)
 	return ffs(prev);
 }
 
+static void abort_all_output(struct host_session *sess)
+{
+	sess->inwd_out = sess->inwd_in;
+}
+
 static void process_spi_input(struct host_session *sess)
 {
 	unsigned int i;
@@ -777,9 +784,11 @@ static void process_spi_input(struct host_session *sess)
 			int bits_remaining = sess->key_bit_count - 12;
 
 			key_data = sess->key_bits >> bits_remaining;
-			fprintf(stderr, "Send keyset data = %4o\n",
-				(key_data >> 1) & 0x3ff);
-			send_key(sess, (key_data >> 1) & 0x3ff);
+			key_data = (key_data >> 1) & 0x3ff;
+			fprintf(stderr, "Send keyset data = %4o\n", key_data);
+			send_key(sess, key_data);
+			if (key_data == KEY_STOP || key_data == KEY_STOP1)
+				abort_all_output(sess);
 			sess->key_bits &= (1 << bits_remaining) - 1;
 			sess->key_bit_count -= 12;
 			if (sess->key_bits == 0)
