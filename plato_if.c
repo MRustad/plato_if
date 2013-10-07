@@ -42,6 +42,7 @@
 #define NO_TERMINAL	0
 #define HOST_DECODE1	0
 #define HOST_DECODE2	1
+#define HOST_DECODE3	0
 
 #define ARRAY_SIZE(x)	(sizeof(x) / sizeof((x)[0]))
 #define UNUSED	__attribute__((__unused__))
@@ -479,7 +480,7 @@ static uint32_t gsw_handle(struct host_session *sess, uint32_t word)
 	return 04000003;		/* Send NOP to terminal */
 }
 
-#if HOST_DECODE1 || HOST_DECODE2
+#if HOST_DECODE1 || HOST_DECODE2 || HOST_DECODE3
 /* chmem - Return possible characters
  *
  * @ch: Six-bit character
@@ -706,8 +707,10 @@ static uint32_t get_host_word(struct host_session *sess)
 			--sess->erase_abort_count;
 		if (!is_abortable_command(sess, word))
 			break;
+#if HOST_DECODE3
 		fprintf(stderr, "A\n");
 		decode_host_word(word);
+#endif /* HOST_DECODE3 */
 	} while (sess->erase_abort_count);
 	sess->inwd_out = tmp_out;
 	return word;
