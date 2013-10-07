@@ -1227,17 +1227,13 @@ static int process_arguments(int argc, char *argv[])
 			usage(cmd);
 			exit(0);
 		case 'p':
-			if (argv[optind][0] == '\0')
-				return 1;
-			port = argv[optind];
+			port = optarg;
 			break;
 		case 'r':
-			spi_speed = atoi(argv[optind]);
+			spi_speed = atoi(optarg);
 			break;
 		case 's':
-			if (argv[optind][0] == '\0')
-				return 1;
-			spi_dev = argv[optind];
+			spi_dev = optarg;
 			break;
 		case '?':
 		default:
