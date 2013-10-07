@@ -34,4 +34,3 @@ ${OBJ}:
 clean:
 	rm -f ${TARGETS} ${SIMPLE_TARGETS}
 	rm -rf ${OBJ}
-	rm *.d
