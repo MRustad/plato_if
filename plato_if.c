@@ -51,7 +51,7 @@
 
 bool	audio_opened;
 
-#define SND_RATE	24000	/* Sound sample rate */
+#define SND_RATE	48000	/* Sound sample rate */
 #define SND_PERIODS	2
 #define SND_CHANNELS	2
 #define FRAME_SIZE	(sizeof(int16_t) * SND_CHANNELS)
@@ -1001,6 +1001,10 @@ static int open_gsw(struct host_session *sess)
 		return -1;
 	}
 	fprintf(stderr, "Exact rate = %d, SND_RATE = %d\n", exact, SND_RATE);
+	if (exact != SND_RATE) {
+		fprintf(stderr, "Rate mismatch - change SND_RATE to %d\n", exact);
+		return -1;
+	}
 
 	err = snd_pcm_hw_params_set_channels(snd_ph, snd_hw_params,
 					     SND_CHANNELS);
