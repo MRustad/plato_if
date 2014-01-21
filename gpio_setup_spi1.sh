@@ -1,4 +1,6 @@
 #!/bin/bash -e
+# GPIO setup script for SPI1 on Galileo for Linux access
+# Mark Rustad, mark.d.rustad@intel.com
 
 gpio_path=/sys/class/gpio
 
