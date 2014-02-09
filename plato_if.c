@@ -40,6 +40,7 @@
 #include <linux/spi/spidev.h>
 
 #define NO_TERMINAL	0
+#define POLL		1
 #define HOST_DECODE1	0
 #define HOST_DECODE2	1
 #define HOST_DECODE3	0
@@ -171,6 +172,7 @@ enum host_states { in_sync, out_of_sync };
 struct host_session {
 	int		fd;		/* File descriptor for session */
 	int		spi_fd;		/* SPI file descriptor */
+	int		snd_fd;		/* Sound file descriptor */
 	enum host_states host_state;
 	uint16_t	erase_abort_count;
 	uint16_t	inwd_in;
@@ -185,6 +187,7 @@ struct host_session {
 	uint8_t		vix;		/* Voice index */
 	uint8_t		wc;		/* Word count */
 	uint8_t		inhibit;	/* Input inhibit */
+	snd_async_handler_t *pcm_handler;
 	int16_t		samples[FRAMES_PER_PERIOD * SND_CHANNELS];
 	struct voice	voices[VOICES];
 	uint32_t	lde_count;
@@ -239,8 +242,8 @@ static int debug_flag;
 
 static const char *port = "5004";	/* Default port number */
 static const char *host = "cyberserv.org";
-static const char *spi_dev = "/dev/spidev0.0";
-static uint32_t	spi_speed = 4000;
+static const char *spi_dev = "/dev/spidev1.0";
+static uint32_t	spi_speed = 5040;
 
 static struct host_session sess = {
 	.pending_echo = -1,
@@ -251,10 +254,8 @@ static snd_pcm_hw_params_t *snd_hw_params;
 static snd_pcm_stream_t stream = SND_PCM_STREAM_PLAYBACK;
 static const char pcm_name[] = "hw:0,0";
 
-static snd_async_handler_t *pcm_handler;
-
 struct fd_proc {
-	void	(*poll)(void *data, int revents);
+	void	(*poll)(void *data, struct pollfd *);
 	void	*data;
 };
 
@@ -263,7 +264,7 @@ static struct pollfd	*fds;
 static int nfds;
 
 static void
-register_fd(int fd, void (*func)(void *, int), int events, void *data)
+register_fd(int fd, void (*func)(void *, struct pollfd *), int events, void *data)
 {
 	++nfds;
 	if (!fd_proc) {
@@ -302,16 +303,11 @@ static int do_poll(int timeout)
 
 	for (ix = 0; ix < nfds; ++ix) {
 		if (fds[ix].revents) {
-			fd_proc[ix].poll(fd_proc[ix].data, fds[ix].revents);
+			fd_proc[ix].poll(fd_proc[ix].data, &fds[ix]);
 			fds[ix].revents = 0;
 		}
 	}
 	return n;
-}
-
-static void gsw_callback(snd_async_handler_t *handler)
-{
-	fprintf(stderr, "%s: handler=%p\n", __func__, handler);
 }
 
 #if 0
@@ -351,7 +347,6 @@ static unsigned int host_word_count(struct host_session *sess)
 }
 
 #define KEY_NEXT	026
-//#define KEY_STOP1	01640
 #define KEY_STOP	032
 #define KEY_STOP1	072
 #define KEY_TURNON	01700
@@ -400,8 +395,6 @@ static void send_key(struct host_session *sess, uint16_t key)
 			fprintf(stderr, "wrong size = %d\n", rc);
 		return;
 	}
-	fprintf(stderr, "send %04o [%s]\n", key,
-		key_decode[key] ? key_decode[key] : "");
 }
 
 /* echo_handle() - Check for echo commands and handle them
@@ -816,7 +809,7 @@ static void send_word(struct host_session *sess, uint32_t word)
 		.rx_buf = (__u64)(unsigned long)sess->spi_buf,
 		.len = sizeof(sess->spi_buf),
 		.delay_usecs = 0,
-		.speed_hz = 4000,
+		.speed_hz = spi_speed,
 		.bits_per_word = 8,
 	};
 	unsigned int i;
@@ -876,7 +869,6 @@ static void process_spi_input(struct host_session *sess)
 
 			key_data = sess->key_bits >> bits_remaining;
 			key_data = (key_data >> 1) & 0x3ff;
-			fprintf(stderr, "Send keyset data = %4o\n", key_data);
 			send_key(sess, key_data);
 			if (key_data == KEY_STOP || key_data == KEY_STOP1)
 				abort_all_output(sess);
@@ -893,25 +885,35 @@ static void process_spi_input(struct host_session *sess)
 }
 #endif /* ! NO_TERMINAL */
 
-static void gsw_poll(void *p, int event)
+#if POLL
+static void gsw_poll(void *p, struct pollfd *pfd)
 {
 	int rc;
-	struct timespec ts;
-//	static struct timespec last;
+	unsigned short event;
 	struct host_session *sess = p;
 
-	if (clock_gettime(CLOCK_MONOTONIC, &ts) < 0)
-		fprintf(stderr, "clock_gettime failed with %d, %m\n", errno);
-#if 0
-	else
-		fprintf(stderr, "diff %ld, event=%x\n",
-			timediff(&last, &ts) / 1000L, event);
-	last = ts;
-#endif /* 0 */
-
+	rc = snd_pcm_poll_descriptors_revents(snd_ph, pfd, 1, &event);
+	if (rc < 0) {
+		fprintf(stderr, "%s: revent demangle error, %d, %m\n",
+			__func__, rc);
+		return;
+	}
 	if (event & POLLERR) {
 		fprintf(stderr, "%s: error set\n", __func__);
-		snd_pcm_prepare(snd_ph);
+#if 0
+		rc = read(sess->snd_fd, &rc, 0);
+		if (rc < 0) {
+			fprintf(stderr, "%s: read error, %d, %m\n", __func__,
+				errno);
+		}
+#endif /* 0 */
+		rc = snd_pcm_prepare(snd_ph);
+		if (rc < 0) {
+			fprintf(stderr,
+				"%s: Can't recover, prepare failed %m\n",
+				__func__);
+			exit(1);
+		}
 	}
 
 	if (event & POLLOUT) {
@@ -920,7 +922,7 @@ static void gsw_poll(void *p, int event)
 		uint32_t out_word;
 
 		rc = snd_pcm_writei(snd_ph, sess->samples,
-				    sizeof(sess->samples) / FRAME_SIZE);
+				    FRAMES_PER_PERIOD);
 		if (rc < 0) {
 			fprintf(stderr, "%s: error on snd write, rc=%d\n",
 				__func__, rc);
@@ -955,6 +957,72 @@ static void gsw_poll(void *p, int event)
 	}
 }
 
+#else /* POLL */
+
+static void gsw_callback(snd_async_handler_t *ah)
+{
+	snd_pcm_t *ph = snd_async_handler_get_pcm(ah);
+	struct host_session *sess = snd_async_handler_get_callback_private(ah);
+	snd_pcm_sframes_t avail;
+	int rc;
+	struct timespec ts;
+	static struct timespec last;
+
+	fprintf(stderr, "%s: handler=%p\n", __func__, ah);
+
+#if 1
+	if (clock_gettime(CLOCK_MONOTONIC, &ts) < 0)
+		fprintf(stderr, "clock_gettime failed with %d, %m\n", errno);
+	else
+		fprintf(stderr, "diff %ld\n", timediff(&last, &ts) / 1000L);
+	last = ts;
+#endif /* 0 */
+
+	avail = snd_pcm_avail_update(ph);
+	while (avail >= FRAMES_PER_PERIOD) {
+		int i;
+		int voice;
+
+		rc = snd_pcm_writei(snd_ph, sess->samples,
+				    FRAMES_PER_PERIOD);
+		if (rc < 0) {
+			fprintf(stderr, "%s: error on snd write, rc=%d\n",
+				__func__, rc);
+			return;
+		}
+		send_word(sess, do_host_word(sess));
+
+		for (i = 0; i < (int)ARRAY_SIZE(sess->samples); ++i) {
+			uint32_t sample = 0;
+			struct voice *v = &sess->voices[0];
+
+			for (voice = 0; voice < VOICES; ++voice, ++v)
+				sample += generate(v);
+
+			sample >>= NVSHIFT;
+			sess->samples[i] = sample;
+			sess->samples[++i] = sample;
+		}
+
+#if NO_TERMINAL
+		if (/*sess->lde_count >= LDE_WAIT &&*/ sess->next_key < num_keys &&
+		    --sess->next_time == 0) {
+			send_key(sess, keys[sess->next_key].key);
+			++sess->next_key;
+			if (sess->next_key < num_keys)
+				sess->next_time = keys[sess->next_key].delay;
+			else
+				fprintf(stderr, "done sending keys\n");
+		}
+#else
+		process_spi_input(sess);
+#endif /* NO_TERMINAL */
+
+		avail = snd_pcm_avail_update(ph);
+	}
+}
+#endif /* POLL */
+
 static int open_gsw(struct host_session *sess)
 {
 	int i;
@@ -967,7 +1035,12 @@ static int open_gsw(struct host_session *sess)
 	}
 
 	err = snd_pcm_open(&snd_ph, pcm_name, stream,
-			   SND_PCM_NONBLOCK | SND_PCM_ASYNC);
+#if POLL
+			   SND_PCM_NONBLOCK
+#else
+			   SND_PCM_ASYNC
+#endif /* POLL */
+			   );
 	if (err < 0) {
 		fprintf(stderr, "Error opening PCM device %s\n", pcm_name);
 		return -1;
@@ -1064,20 +1137,25 @@ static int open_gsw(struct host_session *sess)
 		return -1;
 	}
 
-	register_fd(fds.fd, gsw_poll, POLLOUT | POLLERR, sess);
+	sess->snd_fd = fds.fd;
 
-	err = snd_async_add_pcm_handler(&pcm_handler, snd_ph, gsw_callback,
-					NULL);
+#if POLL
+	register_fd(fds.fd, gsw_poll, POLLOUT | POLLERR, sess);
+#else
+	err = snd_async_add_pcm_handler(&sess->pcm_handler, snd_ph,
+					gsw_callback, sess);
 	if (err < 0) {
 		fprintf(stderr, "Failed to add handler, err=%d\n", err);
 		return -1;
 	}
+#endif /* POLL */
 
 	for (i = 0; i < SND_PERIODS; ++i) {
 		err = snd_pcm_writei(snd_ph, silence,
-				     sizeof(silence) / FRAME_SIZE);
+				     FRAMES_PER_PERIOD);
 		if (err < 0) {
-			fprintf(stderr, "%s: error on snd write\n", __func__);
+			fprintf(stderr, "%s: error on snd write of %d\n",
+				__func__, FRAMES_PER_PERIOD);
 			return -1;
 		}
 	}
@@ -1261,9 +1339,10 @@ static int process_arguments(int argc, char *argv[])
 	return 0;
 }
 
-static void host_poll(void *data, int revents)
+static void host_poll(void *data, struct pollfd *pfd)
 {
 	struct host_session *sess = data;
+	unsigned short revents = pfd->revents;
 	uint8_t	inbuf[3];
 	unsigned int i;
 
@@ -1295,6 +1374,8 @@ static void host_poll(void *data, int revents)
 		} else {
 			len = recv(sess->fd, inbuf, sizeof(inbuf),
 				   MSG_NOSIGNAL);
+			if (len < 0)
+				return;
 			if (len != sizeof(inbuf)) {
 				fprintf(stderr, "len wrong %zd\n", len);
 				sess->host_state = out_of_sync;
@@ -1352,7 +1433,7 @@ static int open_spi(const char *dev, uint32_t speed)
 	uint8_t mode;
 	uint8_t bits;
 
-	mode = SPI_NO_CS | SPI_MODE_1;
+	mode = SPI_MODE_1;
 	bits = 8;
 	fd = open(dev, O_RDWR | O_NONBLOCK);
 	if (fd < 0) {
@@ -1458,20 +1539,23 @@ int main(int argc, char *argv[])
 	if (sess.fd < 0) {
 		int err = errno;
 
-		fprintf(stderr, "Failed to open host %s, errno=%d\n", host, err);
+		fprintf(stderr, "Failed to open host %s, errno=%d\n",
+			host, err);
 		exit(err);
 	}
-
-	register_fd(sess.fd, host_poll, POLLERR | POLLIN, &sess);
 
 	if (open_gsw(&sess) < 0) {
 		fprintf(stderr, "open_gsw failed\n");
 		return 1;
 	}
 
+	struct pollfd pfd = {
+		.fd = sess.fd, .events = POLLERR | POLLIN, .revents = POLLIN
+	};
 
 	for (;;) {
-		do_poll(5);
+		do_poll(0);
+		host_poll(&sess, &pfd);
 	}
 
 	return 0;
