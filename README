@@ -1,0 +1,12 @@
+plato_if is a program to connect classic PLATO IV plasma terminals to
+the PLATO system on the internet at cyberserv.org. This program runs
+under Linux on an Intel Galileo board and uses a custom A9 board in the
+PLATO terminal to connect the Galileo's spi1 device to the terminal
+backplane.
+
+This program also emulates the Gooch Synthetic Woodwind, which was a music
+peripheral for the classic PLATO IV terminals.
+
+This program is licensed under the GPL V2.
+
+Mark Rustad, MRustad@mac.com, 2014/02/09.
