@@ -1329,7 +1329,7 @@ static int process_arguments(int argc, char *argv[])
 	argv += optind;
 
 	if (argc == 1)
-		host = argv[optind];
+		host = argv[0];
 	else if (argc > 1) {
 		fprintf(stderr, "Too many arguments\n");
 		return 4;
