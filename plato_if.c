@@ -41,7 +41,7 @@
 #define NO_TERMINAL	0
 #define POLL		1
 #define HOST_DECODE1	0
-#define HOST_DECODE2	1
+#define HOST_DECODE2	0
 #define HOST_DECODE3	0
 
 #define ARRAY_SIZE(x)	(sizeof(x) / sizeof((x)[0]))
@@ -1457,7 +1457,6 @@ static int open_spi(const char *dev, uint32_t speed)
 		fprintf(stderr, "SPI_IOC_RD_MODE failed, errno=%d\n", errno);
 		goto err_exit;
 	}
-	fprintf(stderr, "mode=%d\n", mode);
 
 	/* SPI bits per word */
 
@@ -1474,7 +1473,6 @@ static int open_spi(const char *dev, uint32_t speed)
 			errno);
 		goto err_exit;
 	}
-	fprintf(stderr, "bits=%d\n", bits);
 
 	/* SPI speed */
 
@@ -1491,7 +1489,6 @@ static int open_spi(const char *dev, uint32_t speed)
 			errno);
 		goto err_exit;
 	}
-	fprintf(stderr, "speed=%d\n", speed);
 
 	return fd;
 
