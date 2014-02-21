@@ -1,5 +1,6 @@
 
 SIMPLE_TARGETS := plato_if
+INST_DIR := /usr/local/bin
 
 OBJ := obj
 
@@ -29,6 +30,14 @@ ${OBJ}/%.o: %.c ${OBJ}
 
 ${OBJ}:
 	mkdir -p $@
+
+.PHONY: install
+install: plato_if
+	install -o root -g root $< platod ${INST_DIR}
+	install -o root -g root platod.init /etc/init.d/platod
+	install -o root -g root gpio.init /etc/init.d/gpio
+	chkconfig platod || chkconfig --add platod
+	test -f /etc/init.d/gpio || ln -s /etc/init.d/gpio /etc/rsS.d/S07gpio
 
 .PHONY:	clean
 clean:

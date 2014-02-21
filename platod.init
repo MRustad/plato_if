@@ -1,0 +1,42 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          platod
+# Required-Start:    networking avahi
+# Default-Start:     3 4 5
+# Default-Stop:      0 1 2 6
+# Short-Description: PLATO interface
+# Description:	PLATO interface daemon startup script
+### END INIT INFO
+
+ulb=/usr/local/bin
+
+test -x ${ulb}/platod || exit 0
+
+. /etc/init.d/functions
+
+case "$1" in
+  start)
+        echo "Starting PLATO interface daemon"
+	${ulb}/platod &
+	echo "done."
+  ;;
+  stop)
+        echo "Stopping PLATO interface daemon"
+	killproc ${ulb}/platod
+	killproc ${ulb}/plato_if
+	echo "done."
+  ;;
+  restart)
+	echo "Restarting PLATO interface daemon"
+	killproc ${ulb}/platod
+	killproc ${ulb}/plato_if
+        sleep 2
+	${ulb}/platod &
+	echo "done."
+  ;;
+  *)
+        echo "usage: $0 { start | stop | restart }"
+  ;;
+esac
+
+exit 0

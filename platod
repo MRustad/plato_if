@@ -1,0 +1,24 @@
+#!/bin/bash
+# Script to control PLATO interface process
+
+phost=cyberserv.org
+snd_dev=/dev/snd/controlC0
+
+function reboot() {
+	echo "$1"
+	sync
+	sleep 10
+	sync
+	sync
+	reboot
+}
+
+while ! ping -q -c 1 -w 10 ${phost} &> /dev/null; do
+	echo "Waiting for ${phost}..."
+done
+
+test -c ${snd_dev} ||
+	reboot "Sound device missing, attempting reboot after 10 seconds"
+	
+/usr/local/bin/plato_if ${phost} &> /var/volatile/log/platod.log || {
+	reboot "plato_if failed, attempting reboot after 10 seconds"

@@ -1,0 +1,51 @@
+#!/bin/sh 
+### BEGIN INIT INFO
+# Provides:             gpio
+# Required-Start:
+# Required-Stop:
+# Default-Start:        S
+# Default-Stop:
+### END INIT INFO
+
+# GPIO setup script for SPI1 on Galileo for Linux access
+# Mark Rustad, mark.d.rustad@intel.com
+
+gpio_path=/sys/class/gpio
+
+gpio=(  4 "out 1"
+        42 "out 0 strong"
+        43 "out 0 strong"
+        54 "out 0 strong"
+        55 "out 0 strong"
+     )
+
+export_gpios() {
+        while [ -n "$1" ]; do
+                if [ ! -d ${gpio_path}/gpio$1 ]; then
+                        echo "Exporting gpio $1"
+                        echo -n $1 > ${gpio_path}/export
+                fi
+                shift
+                shift
+        done
+}
+
+setup_gpio() {
+        echo "Gpio ${1}: direction: $2, value: $3, drive: $4"
+        echo -n $2 > $1/direction
+        echo -n $3 > $1/value
+        echo -n $4 > $1/drive
+}
+
+setup_gpios() {
+        while [ -n "$1" ]; do
+                gpio_dir=${gpio_path}/$1
+                test -d ${gpio_dir} && setup_gpio ${gpio_dir} $2
+                shift
+                shift
+        done
+}
+
+export_gpios "${gpio[@]}"
+setup_gpios "${gpio[@]}"
+
