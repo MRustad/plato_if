@@ -1072,7 +1072,6 @@ static int open_gsw(struct host_session *sess)
 		fprintf(stderr, "Error setting rate\n");
 		return -1;
 	}
-	fprintf(stderr, "Exact rate = %d, SND_RATE = %d\n", exact, SND_RATE);
 	if (exact != SND_RATE) {
 		fprintf(stderr, "Rate mismatch - change SND_RATE to %d\n", exact);
 		return -1;
@@ -1105,8 +1104,6 @@ static int open_gsw(struct host_session *sess)
 		fprintf(stderr, "Error getting max\n");
 		return -1;
 	}
-	fprintf(stderr, "size=%d, min=%lu, max=%lu\n",
-		SND_BUFFER_SIZE, min, max);
 
 	err = snd_pcm_hw_params_set_buffer_size(snd_ph, snd_hw_params,
 						SND_BUFFER_SIZE);
