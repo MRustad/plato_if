@@ -1,4 +1,4 @@
-#!/bin/sh 
+#!/bin/bash
 ### BEGIN INIT INFO
 # Provides:             gpio
 # Required-Start:
@@ -33,13 +33,13 @@ export_gpios() {
 setup_gpio() {
         echo "Gpio ${1}: direction: $2, value: $3, drive: $4"
         echo -n $2 > $1/direction
-        echo -n $3 > $1/value
-        echo -n $4 > $1/drive
+        test -n "$3" && echo -n $3 > $1/value
+        test -n "$4" && echo -n $4 > $1/drive
 }
 
 setup_gpios() {
         while [ -n "$1" ]; do
-                gpio_dir=${gpio_path}/$1
+                gpio_dir=${gpio_path}/gpio$1
                 test -d ${gpio_dir} && setup_gpio ${gpio_dir} $2
                 shift
                 shift
