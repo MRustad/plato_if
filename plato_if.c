@@ -914,13 +914,6 @@ static void gsw_poll(void *p, struct pollfd *pfd)
 	}
 	if (event & POLLERR) {
 		fprintf(stderr, "%s: error set\n", __func__);
-#if 0
-		rc = read(sess->snd_fd, &rc, 0);
-		if (rc < 0) {
-			fprintf(stderr, "%s: read error, %d, %m\n", __func__,
-				errno);
-		}
-#endif /* 0 */
 		rc = snd_pcm_prepare(snd_ph);
 		if (rc < 0) {
 			fprintf(stderr,
@@ -979,18 +972,6 @@ static void gsw_callback(snd_async_handler_t *ah)
 	struct host_session *sess = snd_async_handler_get_callback_private(ah);
 	snd_pcm_sframes_t avail;
 	int rc;
-	struct timespec ts;
-	static struct timespec last;
-
-	fprintf(stderr, "%s: handler=%p\n", __func__, ah);
-
-#if 1
-	if (clock_gettime(CLOCK_MONOTONIC, &ts) < 0)
-		fprintf(stderr, "clock_gettime failed with %d, %m\n", errno);
-	else
-		fprintf(stderr, "diff %ld\n", timediff(&last, &ts) / 1000L);
-	last = ts;
-#endif /* 0 */
 
 	avail = snd_pcm_avail_update(ph);
 	while (avail >= FRAMES_PER_PERIOD) {
