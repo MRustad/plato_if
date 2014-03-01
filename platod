@@ -4,21 +4,23 @@
 phost=cyberserv.org
 snd_dev=/dev/snd/controlC0
 
-function reboot() {
-	echo "$1"
+function delay_boot() {
+	echo "$1 - restarting in 15 seconds"
 	sync
-	sleep 10
+	sleep 15
 	sync
 	sync
 	reboot
+	sleep 5
+	exit 1
 }
+
+test -c ${snd_dev} ||
+	delay_boot "Sound device missing"
 
 while ! ping -q -c 1 -w 10 ${phost} &> /dev/null; do
 	echo "Waiting for ${phost}..."
 done
 
-test -c ${snd_dev} ||
-	reboot "Sound device missing, attempting reboot after 10 seconds"
-	
-/usr/local/bin/plato_if ${phost} &> /var/volatile/log/platod.log || {
-	reboot "plato_if failed, attempting reboot after 10 seconds"
+/usr/local/bin/plato_if ${phost} &> /var/volatile/log/platod.log ||
+	delay_boot "plato_if failed"
