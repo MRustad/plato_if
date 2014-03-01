@@ -196,6 +196,7 @@ struct host_session {
 #else
 	uint32_t	key_bits;	/* Accumulated keyset bits */
 	uint16_t	key_bit_count;	/* Count of bits accumulated */
+	bool		key_stop_search;
 #endif /* NO_TERMINAL */
 	uint8_t		spi_buf[6];
 };
@@ -847,38 +848,52 @@ static void abort_all_output(struct host_session *sess)
 	sess->erase_abort_count = 0;
 }
 
+static void process_spi_byte(struct host_session *sess, uint8_t byte)
+{
+	if (sess->key_bit_count == 0) {
+		if (sess->key_stop_search) {
+			if (byte == 0xff)
+				return;
+			sess->key_stop_search = false;
+		}
+		if (byte == 0)
+			return;
+		sess->key_bit_count = fls(byte);
+		sess->key_bits = byte;
+		return;
+	}
+	sess->key_bits = (sess->key_bits << 8) | byte;
+	sess->key_bit_count += 8;
+	if (sess->key_bit_count >= 12) {
+		uint16_t key_data;
+		int bits_remaining = sess->key_bit_count - 12;
+
+		key_data = sess->key_bits >> bits_remaining;
+		key_data = (key_data >> 1) & 0x3ff;
+		send_key(sess, key_data);
+		sess->key_stop_search = true;
+		if (key_data == KEY_STOP || key_data == KEY_STOP1)
+			abort_all_output(sess);
+		sess->key_bits &= (1 << bits_remaining) - 1;
+		sess->key_bit_count -= 12;
+		if (sess->key_bit_count > 0) {
+			if (sess->key_bits != (1U << sess->key_bit_count) - 1) {
+				sess->key_stop_search = false;
+				sess->key_bit_count = fls(sess->key_bits);
+				return;
+			}
+		}
+		sess->key_bit_count = 0;
+	}
+}
+
 static void process_spi_input(struct host_session *sess)
 {
 	unsigned int i;
 	uint8_t	*bytes = sess->spi_buf;
 
-	for (i = 0; i < sizeof(sess->spi_buf); ++i) {
-		if (sess->key_bit_count == 0) {
-			if (bytes[i] == 0)
-				continue;
-			sess->key_bit_count = fls(bytes[i]);
-			sess->key_bits = bytes[i];
-			continue;
-		}
-		sess->key_bits = (sess->key_bits << 8) | bytes[i];
-		sess->key_bit_count += 8;
-		if (sess->key_bit_count >= 12) {
-			uint16_t key_data;
-			int bits_remaining = sess->key_bit_count - 12;
-
-			key_data = sess->key_bits >> bits_remaining;
-			key_data = (key_data >> 1) & 0x3ff;
-			send_key(sess, key_data);
-			if (key_data == KEY_STOP || key_data == KEY_STOP1)
-				abort_all_output(sess);
-			sess->key_bits &= (1 << bits_remaining) - 1;
-			sess->key_bit_count -= 12;
-			if (sess->key_bits == 0)
-				sess->key_bit_count = 0;
-			else
-				sess->key_bit_count = fls(sess->key_bits);
-		}
-	}
+	for (i = 0; i < sizeof(sess->spi_buf); ++i)
+		process_spi_byte(sess, bytes[i]);
 
 	return;
 }
