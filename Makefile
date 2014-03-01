@@ -8,7 +8,6 @@ __cflags = -O2 -Wall -Werror -Wextra -Wmissing-prototypes -Wstrict-prototypes \
 	-Wcast-align -Wcast-qual -Wformat=2 -Wundef -MMD -MF ${OBJ}/$@.d -g
 __ldflags = -O2 -Wall -Werror -g
 
-#LIBS_plato_if := -lbcm2835 -lrt -lasound
 LIBS_plato_if := -lrt -lasound
 
 all: ${OBJ} ${TARGETS} ${SIMPLE_TARGETS}
@@ -37,7 +36,7 @@ install: plato_if
 	install -o root -g root platod.init /etc/init.d/platod
 	install -o root -g root gpio.init /etc/init.d/gpio
 	chkconfig platod || chkconfig --add platod
-	test -f /etc/init.d/gpio || ln -s /etc/init.d/gpio /etc/rsS.d/S07gpio
+	test -f /etc/init.d/gpio || ln -s /etc/init.d/gpio /etc/rsS.d/S65gpio
 
 .PHONY:	clean
 clean:
