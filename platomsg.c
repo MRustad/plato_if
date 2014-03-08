@@ -31,7 +31,7 @@
 #include <sys/types.h>
 #include <linux/spi/spidev.h>
 
-#define HOST_DECODE 1
+#define HOST_DECODE 0
 
 #define ARRAY_SIZE(x)	(sizeof(x) / sizeof((x)[0]))
 #define UNUSED	__attribute__((__unused__))
