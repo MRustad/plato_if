@@ -11,6 +11,7 @@
 # Mark Rustad, mark.d.rustad@intel.com
 
 gpio_path=/sys/class/gpio
+ulb=/usr/local/bin
 
 gpio=(  4 "out 1"
         42 "out 0 strong"
@@ -48,4 +49,6 @@ setup_gpios() {
 
 export_gpios "${gpio[@]}"
 setup_gpios "${gpio[@]}"
+
+${ulb}/platomsg -c "Starting up"
 
