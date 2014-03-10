@@ -36,7 +36,8 @@ install: plato_if platomsg
 	install -o root -g root platod.init /etc/init.d/platod
 	install -o root -g root gpio.init /etc/init.d/gpio
 	chkconfig platod || chkconfig --add platod
-	test -f /etc/init.d/gpio || ln -s /etc/init.d/gpio /etc/rsS.d/S65gpio
+	rm -f /etc/rcS.d/S[0-9][0-9]gpio
+	ln -s /etc/init.d/gpio /etc/rcS.d/S36gpio
 
 .PHONY:	clean
 clean:
