@@ -261,13 +261,12 @@ static void send_word(struct host_session *sess, uint32_t word)
 	bytes[2] = word >> 8;
 	for (i = 3; i < sizeof(bytes); ++i)
 		bytes[i] = 0;
-	fprintf(stderr, "%02x %02x %02x\n", bytes[0], bytes[1], bytes[2]);
 	rc = ioctl(sess->spi_fd, SPI_IOC_MESSAGE(1), &spi_xfer);
 	if (rc < 0) {
 		fprintf(stderr, "%s: write error: %m\n", __func__);
 		return;
 	}
-	usleep(10000);		/* Delay */
+	usleep(12000);		/* Delay */
 }
 
 #if 0
