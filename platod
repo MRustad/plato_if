@@ -23,6 +23,7 @@ test -c ${snd_dev} ||
 while ! ping -q -c 1 -w 10 ${phost} &> /dev/null; do
 	echo "Waiting for ${phost}..."
 	${ulb}/platomsg "Waiting for ${phost}..."
+	sleep 5
 done
 
 /usr/local/bin/plato_if ${phost} &> /var/volatile/log/platod.log ||
