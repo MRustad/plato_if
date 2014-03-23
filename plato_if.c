@@ -653,12 +653,12 @@ static bool is_abortable_command(struct host_session *sess, uint32_t w)
 	}
 
 	switch (cmd) {
-	case CMD_NOP:
 	case CMD_SSL:
-	case CMD_AUD:
-	case CMD_EXT:
 		return true;
 
+	case CMD_NOP:
+	case CMD_AUD:
+	case CMD_EXT:
 	case CMD_LDM:
 	case CMD_LDC:
 	case CMD_LDE:
