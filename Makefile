@@ -14,6 +14,8 @@ all: ${OBJ} ${TARGETS} ${SIMPLE_TARGETS}
 
 -include $(wildcard ${OBJ}/*.d)
 
+SYSTEMD := $(wildcard /lib/systemd/system)
+
 .SUFFIXES:
 
 ${SIMPLE_TARGETS}: ${OBJ}
@@ -31,13 +33,21 @@ ${OBJ}:
 	mkdir -p $@
 
 .PHONY: install
-install: plato_if platomsg
-	install -o root -g root $< platod platomsg ${INST_DIR}
+install: plato_if platod platomsg
+	install -o root -g root $^ ${INST_DIR}
+ifeq (${SYSTEMD},)
 	install -o root -g root platod.init /etc/init.d/platod
 	install -o root -g root gpio.init /etc/init.d/gpio
 	chkconfig platod || chkconfig --add platod
 	rm -f /etc/rcS.d/S[0-9][0-9]gpio
 	ln -s /etc/init.d/gpio /etc/rcS.d/S36gpio
+else
+	install -o root -g root plato-init.sh ${INST_DIR}
+	install -o root -g root -m 644 plato-init.service ${SYSTEMD}
+	install -o root -g root -m 644 platod.service ${SYSTEMD}
+	systemctl enable plato-init.service
+	systemctl enable platod.service
+endif
 
 .PHONY:	clean
 clean:

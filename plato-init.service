@@ -1,0 +1,11 @@
+[Unit]
+Description=Initialization for PLATO interface
+DefaultDependencies=no
+After=galileo-init.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/plato-init.sh
+
+[Install]
+WantedBy=local-fs.target

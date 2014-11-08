@@ -1,0 +1,10 @@
+[Unit]
+Description=PLATO interface
+After=plato-init.service network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/platod
+
+[Install]
+WantedBy=multi-user.target
