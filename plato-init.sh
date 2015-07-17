@@ -55,5 +55,16 @@ setup_gpio() {
 	test -n "${4}" && set_gpio ${1}/drive ${4}
 }
 
+setup_gpios() {
+	while [ -n "$1" ]; do
+		gpio_dir=$(gpio_path_/gpio$1
+		test -d ${gpio_dir} && setup_gpio ${gpio_dir} $2
+		shift
+		shift
+	done
+}
+
 export_gpios "${gpio[@]}"
+setup_gpios "${gpio[@]}"
+
 ${ulb}/platomsg -c "Starting up"
