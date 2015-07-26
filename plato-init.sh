@@ -48,6 +48,14 @@ export_gpios() {
 	done
 }
 
+set_gpio() {
+	if [ -e ${1} ]; then
+		echo -n ${2} > ${1} || echo "Setting ${1} failed"
+	else
+		echo "No ${1##*/} for ${1%/*}"
+	fi
+}
+
 setup_gpio() {
 	echo "${board}: Gpio ${1}: direction: ${2}, value: ${3}, drive: ${4}"
 	set_gpio ${1}/direction ${2}
@@ -57,7 +65,7 @@ setup_gpio() {
 
 setup_gpios() {
 	while [ -n "$1" ]; do
-		gpio_dir=$(gpio_path_/gpio$1
+		gpio_dir=${gpio_path}/gpio$1
 		test -d ${gpio_dir} && setup_gpio ${gpio_dir} $2
 		shift
 		shift
